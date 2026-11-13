@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Control Console</title>
+<style>
+  :root {
+    --ivory: #FAF9F5; --slate: #141413; --clay: #D97757; --clay-d: #B85C3E;
+    --oat: #E3DACC; --olive: #788C5D;
+    --g50: #F0EEE6; --g200: #D1CFC5; --g500: #87867F; --g800: #3D3D3A;
+    --white: #ffffff; --emerald: #10b981; --red: #ef4444;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--ivory); color:var(--slate); font-family:var(--sans); font-size:14px; line-height:1.5; }
+  .app { display:grid; grid-template-columns:280px 1fr; min-height:100vh; }
+  @media(max-width:880px){ .app{grid-template-columns:1fr;} }
+
+  .sidebar { background:var(--white); border-right:1.5px solid var(--g200); padding:20px; display:flex; flex-direction:column; gap:18px; overflow-y:auto; }
+  .sidebar h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--g500); margin:0 0 6px; font-family:var(--mono); }
+  .filter-group { display:flex; flex-direction:column; gap:3px; }
+  .filter-chip { padding:5px 10px; border-radius:7px; cursor:pointer; font-size:12.5px; border:1.5px solid var(--g200); background:var(--white); text-align:left; transition:all 120ms; }
+  .filter-chip:hover { border-color:var(--slate); }
+  .filter-chip.active { background:var(--slate); color:var(--white); border-color:var(--slate); }
+
+  .main { padding:24px 32px; overflow-y:auto; }
+  .toolbar { display:flex; align-items:center; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
+  .toolbar h1 { font-size:22px; font-weight:600; margin:0; flex:1; min-width:200px; }
+  .btn { padding:8px 16px; border-radius:8px; border:1.5px solid var(--g200); background:var(--white); cursor:pointer; font-size:13px; transition:all 120ms; display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); white-space:nowrap; }
+  .btn:hover { border-color:var(--slate); }
+  .btn.primary { background:var(--clay); color:var(--white); border-color:var(--clay); }
+  .btn.primary:hover { background:var(--clay-d); }
+  .btn.small { padding:3px 9px; font-size:11px; border-radius:6px; }
+  .btn.busy { opacity:.5; pointer-events:none; }
+
+  .publisher-group { margin-bottom:24px; }
+  .pub-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .pub-name { font-family:var(--mono); font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--g500); }
+  .pub-badge { font-size:10px; padding:2px 7px; border-radius:999px; font-family:var(--mono); }
+  .pub-badge.disabled { background:#F8E9E0; color:var(--clay-d); }
+  .pub-badge.enabled { background:#E0F2E9; color:var(--olive); }
+
+  .skill-row { display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:12px; padding:10px 16px; background:var(--white); border:1.5px solid var(--g200); border-radius:9px; margin-bottom:4px; transition:border-color 120ms; }
+  .skill-row:hover { border-color:var(--g500); }
+  .skill-row.gd { opacity:.55; }
+  .skill-name .title { font-weight:600; font-size:13px; }
+  .skill-name .meta { font-size:10.5px; color:var(--g500); font-family:var(--mono); }
+  .rt-badges { display:flex; gap:4px; flex-wrap:wrap; }
+  .rt-badge { font-size:9.5px; padding:2px 7px; border-radius:5px; font-family:var(--mono); letter-spacing:.03em; }
+  .rt-badge.on { background:var(--g50); color:var(--olive); }
+  .rt-badge.off { background:#F8E9E0; color:var(--clay-d); }
+  .rt-badge.wl { background:#EDF4F7; color:#5B8FAD; }
+  .actions { display:flex; gap:4px; align-items:center; }
+  .search { padding:8px 14px; border:1.5px solid var(--g200); border-radius:8px; font-size:13px; width:100%; background:var(--white); font-family:var(--sans); }
+  .search:focus { outline:none; border-color:var(--slate); }
+
+  .stats { display:flex; gap:12px; margin-bottom:18px; }
+  .stat { padding:8px 14px; background:var(--white); border:1.5px solid var(--g200); border-radius:8px; }
+  .stat .num { font-size:20px; font-weight:700; font-family:var(--mono); }
+  .stat .label { font-size:10.5px; color:var(--g500); }
+
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.3); z-index:100; justify-content:center; align-items:center; }
+  .modal-overlay.show { display:flex; }
+  .modal { background:var(--white); border-radius:14px; padding:24px; width:min(720px, 90vw); max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.15); }
+  .modal h3 { margin:0 0 14px; font-size:15px; }
+  .modal textarea { width:100%; height:360px; font-family:var(--mono); font-size:12px; border:1.5px solid var(--g200); border-radius:8px; padding:12px; resize:vertical; line-height:1.4; }
+  .modal pre { white-space:pre-wrap; font-family:var(--mono); font-size:12px; max-height:60vh; overflow-y:auto; background:var(--g50); padding:16px; border-radius:8px; }
+  .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
+
+  .toast { position:fixed; bottom:24px; right:24px; padding:10px 20px; border-radius:8px; font-size:13px; z-index:200; opacity:0; transition:opacity 200ms; pointer-events:none; }
+  .toast.show { opacity:1; }
+  .toast.ok { background:var(--emerald); color:white; }
+  .toast.err { background:var(--red); color:white; }
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+  <h2>Runtime</h2>
+  <div class="filter-group" id="runtime-filters"></div>
+  <h2>Publisher</h2>
+  <div class="filter-group" id="publisher-filters"></div>
+  <h2>Status</h2>
+  <div class="filter-group" id="status-filters">
+    <button class="filter-chip active" data-status="all">All</button>
+    <button class="filter-chip" data-status="enabled">Enabled</button>
+    <button class="filter-chip" data-status="disabled">Disabled</button>
+    <button class="filter-chip" data-status="whitelist">Whitelist</button>
+  </div>
+</aside>
+<main class="main">
+  <div class="toolbar">
+    <h1>Skill Control Console</h1>
+    <button class="btn primary" id="btn-sync" onclick="doSync()">🔄 Sync Upstreams</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <input class="search" placeholder="Search skills..." oninput="render()" id="search">
+  <div id="skill-list"></div>
+</main>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-content"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var STATE = null;
+var filters = {runtime:"all",publisher:"all",status:"all"};
+
+async function init(){
+  try{
+    var resp = await fetch('/state.json');
+    STATE = await resp.json();
+    buildFilters();
+    render();
+  }catch(e){
+    document.getElementById('skill-list').innerHTML='<p style="padding:40px;text-align:center;color:var(--g500)">Cannot connect. Run: <code>python3 .claude/skill-console/server.py</code></p>';
+  }
+}
+
+function getAll(){
+  var skills = [];
+  for(var i=0;i<STATE.upstreams.length;i++){
+    var u = STATE.upstreams[i];
+    for(var j=0;j<u.skills.length;j++){
+      var s = u.skills[j];
+      s.type = 'upstream';
+      skills.push(s);
+    }
+  }
+  for(var i=0;i<STATE.self_owned.length;i++){
+    var s = STATE.self_owned[i];
+    s.type = 'self';
+    s.upstream = 'agent-skills';
+    s.globally_disabled = !s.enabled;
+    s.per_agent = {agents:s.enabled?'enabled':'disabled',claude:s.enabled?'enabled':'disabled',hermes:s.enabled?'enabled':'disabled'};
+    skills.push(s);
+  }
+  return skills;
+}
+
+function buildFilters(){
+  var pubs = new Set();
+  for(var i=0;i<STATE.upstreams.length;i++) pubs.add(STATE.upstreams[i].publisher);
+  pubs.add('agent-skills (self)');
+  var arr = Array.from(pubs).sort();
+  var h = '<button class="filter-chip active" data-publisher="all">All</button>';
+  for(var i=0;i<arr.length;i++) h += '<button class="filter-chip" data-publisher="'+arr[i].replace(/"/g,'&quot;')+'">'+arr[i]+'</button>';
+  document.getElementById('publisher-filters').innerHTML = h;
+  h = '<button class="filter-chip active" data-runtime="all">All</button>';
+  for(var i=0;i<STATE.runtimes.length;i++) h += '<button class="filter-chip" data-runtime="'+STATE.runtimes[i]+'">'+STATE.runtimes[i]+'</button>';
+  document.getElementById('runtime-filters').innerHTML = h;
+
+  document.querySelectorAll('#publisher-filters .filter-chip').forEach(function(b){
+    b.onclick = function(){ filters.publisher = b.dataset.publisher; updateActive('#publisher-filters',b); render(); };
+  });
+  document.querySelectorAll('#runtime-filters .filter-chip').forEach(function(b){
+    b.onclick = function(){ filters.runtime = b.dataset.runtime; updateActive('#runtime-filters',b); render(); };
+  });
+  document.querySelectorAll('#status-filters .filter-chip').forEach(function(b){
+    b.onclick = function(){ filters.status = b.dataset.status; updateActive('#status-filters',b); render(); };
+  });
+}
+
+function updateActive(sel, el){
+  document.querySelectorAll(sel+' .filter-chip').forEach(function(c){ c.classList.toggle('active', c===el); });
+}
+
+function render(){
+  var skills = getAll();
+  var q = (document.getElementById('search').value||'').toLowerCase();
+  if(q) skills = skills.filter(function(s){ return s.name.toLowerCase().indexOf(q) !== -1; });
+  if(filters.runtime !== 'all') skills = skills.filter(function(s){ return s.per_agent[filters.runtime]!=='disabled' || s.per_agent[filters.runtime]==='whitelist'; });
+  if(filters.publisher !== 'all') skills = skills.filter(function(s){ return s.publisher === filters.publisher; });
+  if(filters.status === 'enabled') skills = skills.filter(function(s){ return !s.globally_disabled; });
+  if(filters.status === 'disabled') skills = skills.filter(function(s){ return s.globally_disabled; });
+  if(filters.status === 'whitelist') skills = skills.filter(function(s){ return Object.values(s.per_agent).indexOf('whitelist') !== -1; });
+
+  var groups = {};
+  for(var i=0;i<skills.length;i++){
+    var p = skills[i].publisher;
+    if(!groups[p]) groups[p] = [];
+    groups[p].push(skills[i]);
+  }
+
+  var total = skills.length;
+  var en = skills.filter(function(s){ return !s.globally_disabled; }).length;
+  document.getElementById('stats').innerHTML = '<div class="stat"><div class="num">'+total+'</div><div class="label">Skills</div></div><div class="stat"><div class="num">'+en+'</div><div class="label">Enabled</div></div><div class="stat"><div class="num">'+Object.keys(groups).length+'</div><div class="label">Publishers</div></div>';
+
+  var h = '';
+  var keys = Object.keys(groups).sort();
+  for(var ki=0;ki<keys.length;ki++){
+    var pub = keys[ki];
+    var items = groups[pub];
+    var up = null;
+    for(var ui=0;ui<STATE.upstreams.length;ui++){ if(STATE.upstreams[ui].publisher === pub){ up = STATE.upstreams[ui]; break; } }
+    var pd = up ? up.globally_disabled : false;
+    h += '<div class="publisher-group"><div class="pub-header"><span class="pub-name">'+pub+'</span><span class="pub-badge '+(pd?'disabled':'enabled')+'">'+(pd?'upstream disabled':'upstream enabled')+'</span></div>';
+    for(var si=0;si<items.length;si++){
+      var s = items[si];
+      var gd = s.globally_disabled && Object.values(s.per_agent).indexOf('whitelist') === -1;
+      h += '<div class="skill-row'+(gd?' gd':'')+'"><div class="skill-name"><div class="title">'+s.name+'</div><div class="meta">'+s.upstream+' · '+(s.type==='self'?'self':'upstream')+'</div></div>';
+      h += '<div class="rt-badges">';
+      for(var ri=0;ri<STATE.runtimes.length;ri++){
+        var rt = STATE.runtimes[ri];
+        var st = s.per_agent[rt]||'enabled';
+        var cls = st==='enabled'?'on':(st==='whitelist'?'wl':'off');
+        var sym = st==='enabled'?'✓':(st==='whitelist'?'★':'✗');
+        h += '<span class="rt-badge '+cls+'">'+rt+':'+sym+'</span>';
+      }
+      h += '</div><div class="actions">';
+      h += '<button class="btn small" onclick="editSkill(\''+s.name+'\',\''+s.upstream+'\',\''+s.type+'\')">✏️</button>';
+      if(s.type === 'upstream'){
+        h += '<button class="btn small" onclick="toggleSkill(\''+s.name+'\',\''+s.upstream+'\')">'+(s.globally_disabled?'Enable':'Disable')+'</button>';
+      }
+      h += '</div></div>';
+    }
+    h += '</div>';
+  }
+  document.getElementById('skill-list').innerHTML = h || '<p style="padding:40px;text-align:center;color:var(--g500)">No matching skills</p>';
+}
+
+function toast(msg, ok){
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (ok===false?'err':'ok') + ' show';
+  setTimeout(function(){ t.classList.remove('show'); }, 2500);
+}
+
+async function api(method, path, body){
+  try{
+    var opts = {method:method, headers:{'Content-Type':'application/json'}};
+    if(body) opts.body = JSON.stringify(body);
+    var r = await fetch(path, opts);
+    var d = await r.json();
+    if(d.ok){
+      toast(d.stdout||d.saved||'Done');
+      if(path.indexOf('/api/sync')!==-1 || path.indexOf('/api/enable')!==-1 || path.indexOf('/api/disable')!==-1) setTimeout(function(){ location.reload(); }, 1500);
+    } else { toast(d.error, false); }
+  }catch(e){ toast(e.message, false); }
+}
+
+function toggleSkill(name, upstream){
+  var skills = getAll();
+  for(var i=0;i<skills.length;i++){
+    if(skills[i].name === name && skills[i].upstream === upstream){
+      var action = skills[i].globally_disabled ? 'enable' : 'disable';
+      api('POST', '/api/'+action, {name:name, upstream:upstream});
+      return;
+    }
+  }
+}
+
+async function editSkill(name, upstream, type){
+  var modal = document.getElementById('modal-overlay');
+  var content = document.getElementById('modal-content');
+  modal.classList.add('show');
+  content.innerHTML = '<h3>'+name+' <span style="font-weight:400;color:var(--g500);font-size:13px">'+upstream+'</span></h3><textarea id="edit-area">Loading...</textarea><div class="modal-actions"><button class="btn" onclick="document.getElementById(\'modal-overlay\').classList.remove(\'show\')">Cancel</button><button class="btn primary" onclick="saveEdit(\''+name+'\',\''+upstream+'\',\''+type+'\')">Save</button></div>';
+  try{
+    var r = await fetch('/api/skill-md?name='+encodeURIComponent(name)+'&upstream='+encodeURIComponent(upstream)+'&type='+type);
+    var d = await r.json();
+    document.getElementById('edit-area').value = d.content || 'Failed to load';
+  }catch(e){ document.getElementById('edit-area').value = 'Error: '+e.message; }
+}
+
+function saveEdit(name, upstream, type){
+  var content = document.getElementById('edit-area').value;
+  api('POST', '/api/save-skill', {name:name, upstream:upstream, type:type, content:content});
+  document.getElementById('modal-overlay').classList.remove('show');
+}
+
+async function doSync(){
+  var btn = document.getElementById('btn-sync');
+  btn.classList.add('busy');
+  btn.textContent = '⏳ Syncing...';
+  try{
+    var r = await fetch('/api/sync', {method:'POST', headers:{'Content-Type':'application/json'}});
+    var d = await r.json();
+    var m = document.getElementById('modal-overlay');
+    var c = document.getElementById('modal-content');
+    m.classList.add('show');
+    c.innerHTML = '<h3>🔄 Upstream Sync Results</h3><pre>'+(d.stdout||d.error||'No output')+'</pre><div class="modal-actions"><button class="btn" onclick="document.getElementById(\'modal-overlay\').classList.remove(\'show\');location.reload()">Close & Refresh</button></div>';
+  }catch(e){ toast('Sync failed: '+e.message, false); }
+  btn.classList.remove('busy');
+  btn.textContent = '🔄 Sync Upstreams';
+}
+
+document.getElementById('modal-overlay').onclick = function(e){ if(e.target===this) this.classList.remove('show'); };
+init();
+</script>
+</body>
+</html>

@@ -13,9 +13,22 @@ SCRIPTS = AGENT_PLATFORM / "scripts"
 PORT = 8765
 
 class Handler(BaseHTTPRequestHandler):
+    def _local_request(self):
+        port = self.server.server_port
+        hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
+        host = self.headers.get("Host", "").lower()
+        origin = self.headers.get("Origin")
+        if (host not in hosts or
+                (origin and origin.lower() not in {f"http://{h}" for h in hosts}) or
+                self.headers.get("Sec-Fetch-Site", "").lower() == "cross-site"):
+            self.send_error(403, "Local requests only")
+            return False
+        return True
+
     def log_message(self, fmt, *args): pass
 
     def do_GET(self):
+        if not self._local_request(): return
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             return self.serve_file(self._www("index.html"), "text/html")
@@ -28,6 +41,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
+        if not self._local_request(): return
         body = self._read_body()
         try: data = json.loads(body) if body else {}
         except: data = {}
@@ -46,13 +60,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def serve_json(self, obj):
+    def serve_json(self, obj, status=200):
         data = json.dumps(obj, ensure_ascii=False).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(data))
         self.end_headers()
         self.wfile.write(data)
+
+    @staticmethod
+    def _skill_path(name, uid, stype):
+        if stype not in ("self", "upstream") or not isinstance(name, str) or not name or name in (".", "..") or "/" in name or "\\" in name:
+            raise ValueError("Invalid skill name or type")
+        if stype == "self":
+            roots = [AGENT_SKILLS]
+        else:
+            if not isinstance(uid, str) or not uid or uid in (".", "..") or "/" in uid or "\\" in uid:
+                raise ValueError("Invalid upstream")
+            roots = [UPSTREAM / uid, DISABLED / uid]
+        for root in roots:
+            base = AGENT_SKILLS if stype == "self" else UPSTREAM
+            if not root.resolve().is_relative_to(base.resolve()):
+                continue
+            target = root / name / "SKILL.md"
+            if target.resolve().is_relative_to(root.resolve()) and target.is_file():
+                return target
+        return None
 
     def serve_skill_md(self, raw_path):
         from urllib.parse import urlparse, parse_qs
@@ -60,13 +93,12 @@ class Handler(BaseHTTPRequestHandler):
         name = qs.get("name", [""])[0]
         uid = qs.get("upstream", [""])[0]
         stype = qs.get("type", ["upstream"])[0]
-        if stype == "self":
-            f = AGENT_SKILLS / name / "SKILL.md"
-        else:
-            f = UPSTREAM / uid / name / "SKILL.md"
-            if not f.exists(): f = DISABLED / uid / name / "SKILL.md"
-        if f.exists(): return self._ok({"content": f.read_text("utf-8"), "path": str(f)})
-        return self._err(f"Not found: {f}")
+        try:
+            f = self._skill_path(name, uid, stype)
+        except ValueError as e:
+            return self._err(str(e))
+        if f: return self._ok({"content": f.read_text("utf-8"), "path": str(f)})
+        return self._err("Skill not found")
 
     def _skill_cmd(self, action, data):
         name = data.get("name", ""); uid = data.get("upstream", "")
@@ -77,7 +109,11 @@ class Handler(BaseHTTPRequestHandler):
         if agent: args = ["bash", str(script), "--agent", agent, "--upstream", uid, "--skill", name]
         try:
             r = subprocess.run(args, capture_output=True, text=True, timeout=30)
-            subprocess.run(["bash", str(SCRIPTS / "install_links.sh")], capture_output=True, timeout=30)
+            if r.returncode:
+                return self._err(r.stderr.strip() or r.stdout.strip() or "Skill command failed")
+            links = subprocess.run(["bash", str(SCRIPTS / "install_links.sh")], capture_output=True, text=True, timeout=30)
+            if links.returncode:
+                return self._err(links.stderr.strip() or links.stdout.strip() or "Link installation failed")
             return self._ok({"stdout": r.stdout, "stderr": r.stderr})
         except Exception as e:
             return self._err(str(e))
@@ -118,6 +154,9 @@ class Handler(BaseHTTPRequestHandler):
         if r.stderr:
             output += f"\n=== Stderr ===\n{r.stderr[:2000]}\n"
 
+        if r.returncode != 0:
+            return self._err(output)
+
         # Run install_links.sh
         try:
             r2 = subprocess.run(["bash", str(SCRIPTS / "install_links.sh")],
@@ -125,8 +164,10 @@ class Handler(BaseHTTPRequestHandler):
                                cwd=str(AGENT_PLATFORM), env=env)
             output += "\n=== Install Links ===\n"
             output += (r2.stdout or "(no stdout)")[:2000]
+            if r2.returncode:
+                return self._err(output + "\n" + (r2.stderr or "Link installation failed")[:2000])
         except Exception as e:
-            output += f"\n⚠️  install_links.sh failed: {e}"
+            return self._err(output + f"\ninstall_links.sh failed: {e}")
 
         return self._ok({"stdout": output})
 
@@ -134,12 +175,11 @@ class Handler(BaseHTTPRequestHandler):
         name = data.get("name",""); uid = data.get("upstream","")
         content = data.get("content",""); stype = data.get("type","upstream")
         if not name or not content: return self._err("Missing name/content")
-        if stype == "self":
-            f = AGENT_SKILLS / name / "SKILL.md"
-        else:
-            f = UPSTREAM / uid / name / "SKILL.md"
-            if not f.exists(): f = DISABLED / uid / name / "SKILL.md"
-        if not f.exists(): return self._err(f"Not found: {uid}/{name}")
+        try:
+            f = self._skill_path(name, uid, stype)
+        except ValueError as e:
+            return self._err(str(e))
+        if not f: return self._err("Skill not found")
         f.write_text(content, "utf-8")
         return self._ok({"saved": str(f)})
 
@@ -183,8 +223,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return self.rfile.read(length) if length else b""
     def _ok(self, data): return self.serve_json({"ok": True, **data})
-    def _err(self, msg): self.send_response(400); return self.serve_json({"ok": False, "error": msg})
+    def _err(self, msg): return self.serve_json({"ok": False, "error": msg}, status=400)
 
 if __name__ == "__main__":
     print(f"Skill Console → http://localhost:{PORT}")
-    HTTPServer(("", PORT), Handler).serve_forever()
+    HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

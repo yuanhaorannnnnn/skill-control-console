@@ -5,7 +5,8 @@ import json, os, subprocess, sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
-AGENT_PLATFORM = Path("/media/yhr/2T/files/projects/test")
+_DSH_ROOT = os.environ.get("DSH_DATA_ROOT") or os.path.join("/media", os.environ.get("USER", ""), "2T")
+AGENT_PLATFORM = Path(_DSH_ROOT) / "files" / "projects" / "test"
 AGENT_SKILLS = Path.home() / ".agents" / "repos" / "agent-skills" / "skills"
 UPSTREAM = AGENT_PLATFORM / "upstream"
 DISABLED = UPSTREAM / ".disabled"
